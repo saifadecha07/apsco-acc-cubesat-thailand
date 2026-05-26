@@ -1,0 +1,78 @@
+cat << 'EOF' > ai_server.py
+import socket
+import subprocess
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+
+# 1. สอน AI: สร้าง Dataset จำลองให้ AI เรียนรู้รูปประโยค
+training_sentences = [
+    "how hot are you", "what is your temperature", "check heat", "is it burning",
+    "how much ram is left", "check memory", "what is the ram usage", "memory status",
+    "how long have you been running", "what is your uptime", "time since boot",
+    "hello", "hi there", "who are you", "hey"
+]
+# กำหนดหมวดหมู่ (Intent) ให้แต่ละประโยค
+labels = [
+    "temp", "temp", "temp", "temp",
+    "ram", "ram", "ram", "ram",
+    "uptime", "uptime", "uptime",
+    "greet", "greet", "greet", "greet"
+]
+
+print("กำลังเทรน AI Model (NLP)...")
+vectorizer = TfidfVectorizer()
+X_train = vectorizer.fit_transform(training_sentences)
+classifier = MultinomialNB()
+classifier.fit(X_train, labels)
+print("เทรน AI เสร็จสิ้น! ฉลาดแล้ว!")
+
+# 2. ฟังก์ชันดึงข้อมูลจากระบบ Raspberry Pi ของจริง
+def get_system_info(intent):
+    try:
+        if intent == "temp":
+            temp = subprocess.check_output(["vcgencmd", "measure_temp"]).decode('utf-8').strip()
+            return f"อุณหภูมิ CPU ตอนนี้คือ: {temp}"
+        elif intent == "ram":
+            ram = subprocess.check_output(["free", "-m"]).decode('utf-8').split('\n')[1]
+            return f"สถานะ RAM: {ram}"
+        elif intent == "uptime":
+            uptime = subprocess.check_output(["uptime", "-p"]).decode('utf-8').strip()
+            return f"เปิดเครื่องมาแล้ว: {uptime}"
+        elif intent == "greet":
+            return "สวัสดีครับ! ผมคือ AI ประจำเครื่อง Raspberry Pi ถามเรื่อง Temp, RAM หรือ Uptime ได้เลย"
+    except Exception as e:
+        return f"เกิดข้อผิดพลาดในการดึงข้อมูล: {e}"
+    return "ไม่พบข้อมูล"
+
+# 3. เปิด Server รอรับคำสั่ง
+HOST = '0.0.0.0'
+PORT = 65432
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, PORT))
+    s.listen()
+    print(f"\n[AI Server] รันแล้ว! รอรับแชทที่ Port {PORT}...")
+    
+    conn, addr = s.accept()
+    with conn:
+        print(f"เชื่อมต่อกับ Laptop {addr} แล้ว!\n")
+        while True:
+            data = conn.recv(1024)
+            if not data: break
+            text = data.decode('utf-8').lower()
+            print(f"Laptop ถามว่า: {text}")
+            
+            # ให้ AI ทำนายว่าผู้ใช้ต้องการอะไร
+            vec = vectorizer.transform([text])
+            prediction = classifier.predict(vec)[0]
+            confidence = max(classifier.predict_proba(vec)[0])
+            
+            if confidence < 0.25:
+                reply = "AI: เอิ่ม... ประโยคนี้ผมยังไม่เข้าใจครับ ลองถามเรื่อง ความร้อน แรม หรือเวลาเปิดเครื่องดูสิ"
+            else:
+                result = get_system_info(prediction)
+                reply = f"[AI ตีความว่าคุณหมายถึง '{prediction}'] -> {result}"
+            
+            conn.sendall(reply.encode('utf-8'))
+EOF
