@@ -1,44 +1,44 @@
-# LoRa Constellation Handover Workflow
+# LoRa Production-Grade Constellation Workflow
 
-เอกสารนี้อธิบายลำดับการทำงานของระบบ "Constellation Simulator" ซึ่งจำลองสถานการณ์ที่ดาวเทียม 2 ดวง (Sat 1 และ Sat 2) บินผ่านสถานีภาคพื้นดินและทำงานสานต่อกัน โดยอ้างอิงการเก็บข้อมูลลง Array เริ่มจาก Index 0
+เอกสารนี้อธิบายลำดับการทำงานของระบบ "Constellation Simulator" ระดับอุตสาหกรรม (Production-Grade) ซึ่งจำลองการส่งข้อมูลเซ็นเซอร์ของดาวเทียมแบบ Binary Struct และดาวน์โหลด (Downlink) ข้อมูลแบบ Real-time พร้อมระบบตรวจจับ Packet Loss
 
 ---
 
-## 1. บทบาทและอุปกรณ์
+## 1. การจัดโครงสร้างข้อมูล (Telemetry Data Structure)
+เพื่อความสมจริงและประหยัดแบนด์วิดท์คลื่นวิทยุ ระบบไม่ได้ส่งข้อมูลเป็น String แต่แพ็คข้อมูลเป็น **C++ Binary Struct** ขนาดเล็ก:
 
-ระบบถูกแบ่งออกเป็น 2 โหนดหลัก แต่ทำงานจำลองเป็น 3 ส่วน:
-
-### Node 1: Constellation Simulator (เครื่องของน้อง)
-*   **ไฟล์โค้ด:** `real-cubesat/lora1_cubesat.ino`
-*   **หน้าที่:** เป็นโปรแกรมจำลองที่สามารถสวมบทบาทเป็นได้ทั้ง Sat 1 และ Sat 2
-    *   **บทบาท Sat 1:** เมื่อได้รับคำสั่งเริ่ม บินผ่านน่านฟ้า 10 วินาที เก็บข้อมูลโดยเริ่มจาก Array Index 0 แล้วส่งเลข Index สุดท้ายที่เก็บได้ (Handover) บอกสถานีภาคพื้น
-    *   **บทบาท Sat 2:** เมื่อได้รับคำสั่งให้ทำงานต่อ จะเริ่มเก็บข้อมูลต่อจากเลข Array ถัดไปที่ Ground สั่ง บินอีก 10 วินาที แล้วส่งยอดเลข Index สุดท้าย (Final)
-
-### Node 2: Ground Station (เครื่องของคุณ)
-*   **ไฟล์โค้ด:** `real-cubesat/lora2_ground.ino`
-*   **หน้าที่:** เป็นศูนย์ควบคุม
-    *   สั่งการ Sat 1 ให้เริ่มเก็บข้อมูล
-    *   รับข้อมูล Handover เพื่อดูเลข Index สุดท้าย แล้วคำนวณหมายเลข Array ถัดไป (+1)
-    *   สั่งการให้ Sat 2 ไปทำงานต่อจากเลข Array ถัดไป
+```cpp
+struct TelemetryPacket {
+  uint32_t packet_id;    // หมายเลขแพ็คเกจ (Index เริ่มจาก 0)
+  uint32_t timestamp;    // เวลาที่เก็บข้อมูล (มิลลิวินาที)
+  float battery_volts;   // แรงดันแบตเตอรี่จำลอง (3.7V - 4.2V)
+  float temperature_c;   // อุณหภูมิจำลอง (20C - 35C)
+};
+```
 
 ---
 
 ## 2. ลำดับการทำงานของระบบ (Sequence Diagram)
 
-1.  **[Ground]** ผู้ใช้พิมพ์คำว่า `start`
-2.  **[Ground -> Sat 1]** ส่งวิทยุสั่งการ `START_PASS`
-3.  **[Sat 1]** ตอบรับคำสั่ง วนลูป 10 วินาทีเก็บข้อมูลเริ่มที่ 0 (สมมติความเร็วรอบนี้เก็บได้ถึง Index ที่ 49)
-4.  **[Sat 1 -> Ground]** ส่งวิทยุบอก Ground ว่าทำเสร็จแล้วถึงเลขอะไร `HANDOVER:49`
-5.  **[Ground]** รับทราบว่า Sat 1 เก็บข้อมูล Index 0-49 เรียบร้อยแล้ว
-6.  **[Ground]** หน่วงเวลาจำลองรอ Sat 2 บินมาถึง
-7.  **[Ground -> Sat 2]** ส่งวิทยุสั่ง Sat 2 ว่าให้ไปเก็บตัวที่ 50 เป็นต้นไป `RESUME:50`
-8.  **[Sat 2]** ตอบรับคำสั่ง เริ่มเก็บต่อตั้งแต่เลข 50 วนลูปอีก 10 วินาที (สมมติเก็บได้ถึง Index ที่ 98)
-9.  **[Sat 2 -> Ground]** ส่งเลข Index รวมสุดท้ายบอก Ground `FINAL:98`
-10. **[Ground]** สรุปภารกิจสำเร็จ ขึ้นหน้าจอเตรียมพร้อมเริ่มรอบใหม่
+1.  **[Ground]** ผู้ใช้พิมพ์คำว่า `start` เพื่อเริ่มภารกิจ
+2.  **[Ground -> Sat 1]** ยิงคำสั่ง `START_PASS` ขึ้นไป
+3.  **[Sat 1]** ตอบรับคำสั่ง วนลูป 10 วินาที โดยในแต่ละรอบจะ:
+    *   สร้าง `TelemetryPacket` (ใส่ค่า ID, เวลา, สุ่มอุณหภูมิ/แบตเตอรี่)
+    *   ยิงข้อมูลไบนารีก้อนนี้ลงมาที่พื้นโลก **ทันที (Real-time Downlink)**
+    *   บวกค่า ID เพิ่ม 1
+4.  **[Ground]** รับก้อนไบนารี แปลงกลับเป็น Struct แล้วแสดงผลหน้าจอ
+    *   *ระบบป้องกัน:* หากเลข `packet_id` ที่รับมากระโดดข้าม (เช่น จาก 5 ไป 7) จะขึ้นแจ้งเตือน **[WARNING] PACKET LOSS DETECTED!** ทันที
+5.  **[Sat 1 -> Ground]** เมื่อหมด 10 วิ ส่งวิทยุข้อความ `HANDOVER`
+6.  **[Ground]** รับคำสั่ง `HANDOVER` ดูว่าตัวเองได้รับ ID ล่าสุดถึงเลขอะไร แล้วบวก 1 เป็นเลขถัดไป (สมมติล่าสุดคือ 12 -> ต่อไปคือ 13)
+7.  **[Ground]** หน่วงเวลาจำลอง 3 วินาทีรอ Sat 2
+8.  **[Ground -> Sat 2]** ยิงคำสั่งวิทยุสั่งให้ดวงที่ 2 ไปเริ่มเก็บต่อ `RESUME:13`
+9.  **[Sat 2]** รับช่วงต่อจาก ID 13 และวนลูป 10 วินาที ส่งแพ็คเกจไบนารีลงมาแบบสดๆ เหมือนเดิม
+10. **[Sat 2 -> Ground]** หมด 10 วิ ส่งข้อความ `FINAL` ปิดจบ
+11. **[Ground]** แสดงสรุปผลหน้าจอ พร้อมรับคำสั่งรอบใหม่
 
 ---
 
-## 3. ตัวอย่าง Log บนจอ
+## 3. ตัวอย่าง Log บนจอ (Real-time Downlink)
 
 **Ground Station:**
 ```text
@@ -46,37 +46,20 @@
 Type 'start' to simulate Sat 1 flying over.
 
 [CMD] Sending START_PASS to Sat 1...
+[TELEMETRY] ID: 0   | Time: 5432 ms | Batt: 3.84V | Temp: 22.1C | RSSI: -42 dBm
+[TELEMETRY] ID: 1   | Time: 6210 ms | Batt: 3.91V | Temp: 24.5C | RSSI: -45 dBm
+[TELEMETRY] ID: 2   | Time: 6980 ms | Batt: 4.10V | Temp: 31.0C | RSSI: -43 dBm
+...
+[GROUND] Sat 1 Pass Complete. Last ID successfully received: 12
+[GROUND] Instructing Sat 2 to resume from ID: 13 in 3 seconds...
 
-[GROUND] Received Handover from Sat 1!
-Sat 1 collected data index: 0 to 49
-[GROUND] Calculating trajectory for Sat 2...
-[GROUND] Instructing Sat 2 to resume from index 50...
+[TELEMETRY] ID: 13  | Time: 20100 ms| Batt: 3.75V | Temp: 28.4C | RSSI: -50 dBm
+>> [WARNING] PACKET LOSS DETECTED! Expected 14, but got 15 <<
+[TELEMETRY] ID: 15  | Time: 21500 ms| Batt: 4.05V | Temp: 21.9C | RSSI: -48 dBm
+...
 
 ====================================
 [GROUND] Constellation Mission Complete!
-Sat 2 finished collection up to Array index: 98
+Total packets collected and downlinked up to ID: 25
 ====================================
-```
-
-**Constellation Simulator (CubeSat Node):**
-```text
-[CONSTELLATION SIMULATOR] Ready!
-Waiting for Ground commands...
-
-[SAT 1] Entering coverage zone! Starting collection...
-Collected Array Data #0
-Collected Array Data #1
-...
-Collected Array Data #49
-[SAT 1] Leaving coverage zone. Last index collected: 49
-[SAT 1] Sending HANDOVER info to Ground...
-
-[SAT 2] Entering coverage zone!
-[SAT 2] Ground ordered to resume from Array #50
-Collected Array Data #50
-Collected Array Data #51
-...
-Collected Array Data #98
-[SAT 2] Leaving coverage zone. Final Array index: 98
-[SAT 2] Sending FINAL report to Ground...
 ```

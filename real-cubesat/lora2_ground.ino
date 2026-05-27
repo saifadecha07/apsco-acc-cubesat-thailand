@@ -5,6 +5,18 @@
 #define rst 14
 #define dio0 2
 
+// โครงสร้างข้อมูลต้องตรงกับฝั่งดาวเทียมเป๊ะๆ
+#pragma pack(push, 1)
+struct TelemetryPacket {
+  uint32_t packet_id;
+  uint32_t timestamp;
+  float battery_volts;
+  float temperature_c;
+};
+#pragma pack(pop)
+
+uint32_t lastReceivedId = 0; // ตัวแปรสำหรับจำว่ารับ ID ล่าสุดเลขอะไรไป เพื่อเช็กของหาย
+
 void setup() {
   Serial.begin(115200);
   while (!Serial);
@@ -20,11 +32,11 @@ void setup() {
 }
 
 void loop() {
-  // รับคำสั่งจากคีย์บอร์ด
   if (Serial.available()) {
     String input = Serial.readStringUntil('\n');
     input.trim();
     if (input == "start") {
+      lastReceivedId = 0; // รีเซ็ตระบบ
       Serial.println("[CMD] Sending START_PASS to Sat 1...");
       LoRa.beginPacket();
       LoRa.print("START_PASS");
@@ -32,38 +44,45 @@ void loop() {
     }
   }
 
-  // รอฟังสัญญาณวิทยุ
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
-    String msg = "";
-    while (LoRa.available()) {
-      msg += (char)LoRa.read();
-    }
-    
-    // ถ้าได้รับแจ้งว่า Sat 1 บินผ่านเสร็จแล้ว
-    if (msg.startsWith("HANDOVER:")) {
-      int lastCollected = msg.substring(9).toInt(); // แกะเลข index สุดท้ายออกมา
-      Serial.println("\n[GROUND] Received Handover from Sat 1!");
-      Serial.println("Sat 1 collected data index: 0 to " + String(lastCollected));
+    // 1. ถ้าขนาดแพ็คเกจเท่ากับขนาดของ Struct แปลว่าเป็น "ข้อมูลเซ็นเซอร์ (Telemetry)"
+    if (packetSize == sizeof(TelemetryPacket)) {
+      TelemetryPacket pkt;
+      LoRa.readBytes((uint8_t*)&pkt, sizeof(pkt));
       
-      int nextIndex = lastCollected + 1; // คำนวณว่าจะให้ Sat 2 เริ่มที่เลขไหนต่อไป
-      Serial.println("[GROUND] Calculating trajectory for Sat 2...");
-      Serial.println("[GROUND] Instructing Sat 2 to resume from index " + String(nextIndex) + "...");
-      delay(3000); // จำลองเวลาที่ดาวเทียมดวงต่อไปกำลังบินมา
-      
-      // ยิงคำสั่งไปหาดาวเทียมดวงที่ 2
-      LoRa.beginPacket();
-      LoRa.print("RESUME:" + String(nextIndex));
-      LoRa.endPacket();
+      // ระบบตรวจจับ Packet Loss (ข้อมูลหล่นหายกลางอากาศ)
+      // ถ้า ID ที่รับมา มันมากกว่า ID ก่อนหน้าเกิน 1 สเต็ป แปลว่ามีอันที่หายไป!
+      if (pkt.packet_id > lastReceivedId + 1 && lastReceivedId != 0 && pkt.packet_id != 0) {
+        Serial.printf(">> [WARNING] PACKET LOSS DETECTED! Expected %d, but got %d <<\n", lastReceivedId + 1, pkt.packet_id);
+      }
+
+      // แสดงผลหน้าจอแบบ Real-time
+      Serial.printf("[TELEMETRY] ID: %-3d | Time: %lu ms | Batt: %.2fV | Temp: %.1fC | RSSI: %d dBm\n", 
+            pkt.packet_id, pkt.timestamp, pkt.battery_volts, pkt.temperature_c, LoRa.packetRssi());
+            
+      lastReceivedId = pkt.packet_id; // จำ ID ล่าสุดไว้
     } 
-    // ถ้าได้รับแจ้งว่า Sat 2 ทำงานเสร็จ
-    else if (msg.startsWith("FINAL:")) {
-      int finalCount = msg.substring(6).toInt();
-      Serial.println("\n====================================");
-      Serial.println("[GROUND] Constellation Mission Complete!");
-      Serial.println("Sat 2 finished collection up to Array index: " + String(finalCount));
-      Serial.println("====================================\n");
-      Serial.println("Type 'start' for a new pass.\n");
+    // 2. ถ้าขนาดไม่เท่ากับ Struct แปลว่าเป็น "ข้อความคำสั่งสั่งการ (Command)"
+    else {
+      String msg = "";
+      while (LoRa.available()) msg += (char)LoRa.read();
+
+      if (msg == "HANDOVER") {
+         uint32_t nextId = lastReceivedId + 1;
+         Serial.printf("\n[GROUND] Sat 1 Pass Complete. Last ID successfully received: %d\n", lastReceivedId);
+         Serial.printf("[GROUND] Instructing Sat 2 to resume from ID: %d in 3 seconds...\n", nextId);
+         delay(3000);
+         LoRa.beginPacket();
+         LoRa.print("RESUME:" + String(nextId));
+         LoRa.endPacket();
+      } 
+      else if (msg == "FINAL") {
+         Serial.printf("\n====================================\n");
+         Serial.printf("[GROUND] Constellation Mission Complete!\n");
+         Serial.printf("Total packets collected and downlinked up to ID: %d\n", lastReceivedId);
+         Serial.printf("====================================\n\nType 'start' for a new pass.\n");
+      }
     }
   }
 }
