@@ -42,11 +42,11 @@ void loop() {
     
     // ถ้าได้รับแจ้งว่า Sat 1 บินผ่านเสร็จแล้ว
     if (msg.startsWith("HANDOVER:")) {
-      int collected = msg.substring(9).toInt(); // แกะตัวเลขออกมา
+      int lastCollected = msg.substring(9).toInt(); // แกะเลข index สุดท้ายออกมา
       Serial.println("\n[GROUND] Received Handover from Sat 1!");
-      Serial.println("Sat 1 collected data index: 1 to " + String(collected));
+      Serial.println("Sat 1 collected data index: 0 to " + String(lastCollected));
       
-      int nextIndex = collected + 1; // คำนวณว่าจะให้ Sat 2 เริ่มที่เท่าไหร่
+      int nextIndex = lastCollected + 1; // คำนวณว่าจะให้ Sat 2 เริ่มที่เลขไหนต่อไป
       Serial.println("[GROUND] Calculating trajectory for Sat 2...");
       Serial.println("[GROUND] Instructing Sat 2 to resume from index " + String(nextIndex) + "...");
       delay(3000); // จำลองเวลาที่ดาวเทียมดวงต่อไปกำลังบินมา
