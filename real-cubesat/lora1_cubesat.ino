@@ -5,13 +5,13 @@
 #define rst 14
 #define dio0 2
 
-// 1. สร้างโครงสร้างข้อมูล (Struct) แบบเดียวกับที่ใช้ในอุตสาหกรรม
+// โครงสร้างข้อมูล (Struct)
 #pragma pack(push, 1)
 struct TelemetryPacket {
-  uint32_t packet_id;    // หมายเลข Index
-  uint32_t timestamp;    // เวลาที่เก็บข้อมูล
-  float battery_volts;   // แรงดันแบตเตอรี่
-  float temperature_c;   // อุณหภูมิ
+  uint32_t packet_id;
+  uint32_t timestamp;
+  float battery_volts;
+  float temperature_c;
 };
 #pragma pack(pop)
 
@@ -21,7 +21,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
 
-  Serial.println("[CONSTELLATION SIMULATOR] Ready!");
+  Serial.println("[CONSTELLATION SIMULATOR: STORE & FORWARD]");
   Serial.println("Waiting for Ground commands...");
 
   LoRa.setPins(ss, rst, dio0);
@@ -49,33 +49,45 @@ void loop() {
   }
 }
 
-// ฟังก์ชันหลักสำหรับจำลองดาวเทียมบินผ่านและยิงข้อมูลลงมาแบบ Real-time
+// ฟังก์ชันจำลองดาวเทียมบินผ่าน: เก็บข้อมูลเงียบๆ (Store) แล้วสาดข้อมูลตู้มเดียว (Forward)
 void runSatellitePass(String satName) {
-  Serial.println("\n[" + satName + "] Entering coverage zone! Starting DOWNLINK...");
+  Serial.println("\n[" + satName + "] Entering coverage zone! Starting STORE phase...");
   unsigned long startTime = millis();
   
-  // บินผ่าน 10 วินาที
-  while (millis() - startTime < 10000) {
-    // สร้างแพ็คเกจข้อมูลจำลอง
-    TelemetryPacket pkt;
-    pkt.packet_id = dataIndex;
-    pkt.timestamp = millis();
-    pkt.battery_volts = 3.7 + ((float)random(0, 50) / 100.0);    // สุ่มไฟ 3.70 - 4.20V
-    pkt.temperature_c = 20.0 + ((float)random(0, 150) / 10.0);   // สุ่มอุณหภูมิ 20.0 - 35.0C
+  // สร้าง Array สำหรับเป็นบัฟเฟอร์เก็บข้อมูล (เก็บได้สูงสุด 50 ชุดต่อรอบ)
+  TelemetryPacket buffer[50]; 
+  int collectedCount = 0;
 
-    // ยิงข้อมูลเป็น Binary ก้อนเดียวลงไปที่ Ground
-    LoRa.beginPacket();
-    LoRa.write((uint8_t*)&pkt, sizeof(pkt));
-    LoRa.endPacket();
+  // 1. PHASE: STORE (บินผ่าน 10 วินาที เก็บข้อมูลเงียบๆ ไม่ส่งวิทยุ)
+  while (millis() - startTime < 10000 && collectedCount < 50) {
+    // บันทึกข้อมูลลง Array (SD Card จำลอง)
+    buffer[collectedCount].packet_id = dataIndex;
+    buffer[collectedCount].timestamp = millis();
+    buffer[collectedCount].battery_volts = 3.7 + ((float)random(0, 50) / 100.0);
+    buffer[collectedCount].temperature_c = 20.0 + ((float)random(0, 150) / 10.0);
 
-    Serial.printf("[%s] Downlinking Packet ID: %d | Batt: %.2fV | Temp: %.1fC\n", 
-                  satName.c_str(), pkt.packet_id, pkt.battery_volts, pkt.temperature_c);
+    Serial.printf("[%s] Reading Sensor... Stored in Buffer Index %d (Packet ID: %d)\n", 
+                  satName.c_str(), collectedCount, dataIndex);
     
     dataIndex++;
-    delay(random(300, 800)); // หน่วงเวลาส่งเพื่อไม่ให้ช่องสัญญาณเต็มเกินไป
+    collectedCount++;
+    delay(random(300, 800)); // สุ่มเวลาอ่านค่าเซ็นเซอร์
   }
 
-  Serial.println("[" + satName + "] Leaving zone. Sending HANDOVER signal...");
+  // 2. PHASE: FORWARD (Data Dump - ยิงข้อมูลทั้งหมดรวดเดียวลง Ground Station)
+  Serial.printf("\n[%s] Pass complete. Initiating DATA DUMP (%d packets)...\n", satName.c_str(), collectedCount);
+  
+  for (int i = 0; i < collectedCount; i++) {
+    LoRa.beginPacket();
+    LoRa.write((uint8_t*)&buffer[i], sizeof(TelemetryPacket));
+    LoRa.endPacket();
+    
+    // หน่วงเวลาเล็กน้อย (100ms) ให้วิทยุ Ground ฝั่งรับทำงานทัน และป้องกัน LoRa Module ค้าง
+    delay(100); 
+  }
+
+  // 3. จบการส่ง Data Dump ส่งสัญญาณบอก Ground ว่าจบแล้ว
+  Serial.println("[" + satName + "] Data Dump Complete. Sending HANDOVER/FINAL signal...");
   LoRa.beginPacket();
   if (satName == "SAT 1") LoRa.print("HANDOVER");
   else LoRa.print("FINAL");
