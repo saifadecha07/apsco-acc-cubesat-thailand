@@ -1,73 +1,52 @@
-# LoRa Constellation Store-and-Forward Workflow
+# 🛰️ LoRa Constellation Simulator (Starlink Architecture)
 
-เอกสารนี้อธิบายลำดับการทำงานของระบบ "Constellation Simulator" ระดับอุตสาหกรรม ซึ่งจำลองสถาปัตยกรรม **"Store-and-Forward" (Data Dump)** ที่ใช้ในดาวเทียม CubeSat ที่อยู่นอกพื้นที่รับสัญญาณ ก่อนที่จะเทข้อมูลทั้งหมด (Data Dump) ลงมายังสถานีภาคพื้นเมื่อบินผ่าน
+เอกสารนี้อธิบายลำดับการทำงาน (Workflow) ของระบบจำลองกลุ่มดาวเทียมที่สื่อสารแบบ **Real-Time Streaming และ Seamless Handover** (คล้ายเครือข่าย Starlink) ผ่านเครือข่ายวิทยุ LoRa 
 
----
-
-## 1. การจัดโครงสร้างข้อมูล (Telemetry Data Structure)
-ข้อมูลถูกแพ็คเป็น **C++ Binary Struct** ขนาดเล็กและบันทึกลงในหน่วยความจำ (Buffer/SD Card) ก่อนส่ง:
-
-```cpp
-struct TelemetryPacket {
-  uint32_t packet_id;    // หมายเลขแพ็คเกจ (Index เริ่มจาก 0)
-  uint32_t timestamp;    // เวลาที่เก็บข้อมูล (มิลลิวินาที)
-  float battery_volts;   // แรงดันแบตเตอรี่จำลอง (3.7V - 4.2V)
-  float temperature_c;   // อุณหภูมิจำลอง (20C - 35C)
-};
-```
+ต่างจากดาวเทียมทั่วไปตรงที่ "ไม่มีการกักเก็บข้อมูลไว้รอส่งทีหลัง" แต่จะเป็นการสตรีมข้อมูลสดๆ ตลอดเวลาที่บินผ่าน และสลับส่งไม้ต่อให้ดาวเทียมดวงถัดไปอย่างรวดเร็วไร้รอยต่อ
 
 ---
 
-## 2. ลำดับการทำงานของระบบ (Sequence Diagram)
+## 💻 1. บทบาทและอุปกรณ์ (Roles & Hardware)
 
-1.  **[Ground]** ผู้ใช้พิมพ์คำว่า `start` เพื่อเริ่มภารกิจ
-2.  **[Ground -> Sat 1]** ยิงคำสั่ง `START_PASS` ขึ้นไป
-3.  **[Sat 1] STORE PHASE:** รับคำสั่ง แล้ววนลูป 10 วินาที เพื่อเก็บข้อมูลเงียบๆ (Store) ลงใน Array
-    *   สร้าง `TelemetryPacket` (สุ่มอุณหภูมิ/แบตเตอรี่)
-    *   เก็บบันทึกลงตัวแปร `buffer` (จำลอง SD Card)
-    *   *ในช่วงนี้ ฝั่ง Ground จะยังไม่เห็นข้อมูลใดๆ*
-4.  **[Sat 1 -> Ground] FORWARD PHASE:** เมื่อครบ 10 วิ ดาวเทียมจะทำการ **Data Dump** สาดแพ็คเกจไบนารีทั้งหมดใน Array ลงมายัง Ground อย่างรวดเร็วทีละก้อนต่อเนื่องกัน
-5.  **[Ground]** ตรวจจับ Data Dump Burst ได้ และแสดงผลแพ็คเกจที่ทะลักเข้ามาอย่างรวดเร็ว
-    *   *ระบบป้องกัน:* ตรวจสอบ `packet_id` ป้องกันการสูญหายระหว่าง Burst Transmission
-6.  **[Sat 1 -> Ground]** เมื่อสาดข้อมูลหมดแล้ว ส่งวิทยุข้อความ `HANDOVER`
-7.  **[Ground]** รับคำสั่ง `HANDOVER` ดูว่าตัวเองได้รับ ID ล่าสุดถึงเลขอะไร แล้วบวก 1 เป็นเลขถัดไป
-8.  **[Ground]** หน่วงเวลา 3 วินาที
-9.  **[Ground -> Sat 2]** ยิงคำสั่ง `RESUME:X` ไปให้ดาวเทียมดวงที่ 2 เริ่มทำงานต่อ
-10. **[Sat 2]** รับช่วงต่อจาก ID ถัดไป เข้าสู่ STORE PHASE เก็บข้อมูลเงียบๆ 10 วิ และตามด้วย FORWARD PHASE เพื่อทำ Data Dump
-11. **[Sat 2 -> Ground]** เมื่อสาดข้อมูลหมด ส่งข้อความ `FINAL` ปิดจบ
-12. **[Ground]** แสดงสรุปผลหน้าจอ
+ระบบใช้คอมพิวเตอร์และบอร์ด ESP32 เพียง 2 ชุดเพื่อจำลองโครงข่ายทั้งหมด:
+
+### Node 1: Constellation Simulator (กลุ่มดาวเทียม)
+*   **ผู้ดูแล:** เครื่องจำลอง (Remote PC)
+*   **ไฟล์โค้ด:** `real-cubesat/lora1_cubesat.ino`
+*   **หน้าที่:** สวมบทบาทเป็น Sat 1 และ Sat 2 สลับกัน. จะทำการ **สตรีมข้อมูลสด (Live Stream)** อย่างต่อเนื่องตลอดการบินผ่าน 10 วินาที
+
+### Node 2: Ground Station (สถานีรับสัญญาณภาคพื้น)
+*   **ผู้ดูแล:** ศูนย์ควบคุม (Command PC)
+*   **ไฟล์โค้ด:** `real-cubesat/lora2_ground.ino`
+*   **หน้าที่:** สั่งการเริ่มภารกิจ, แสดงผลข้อมูลแบบเรียลไทม์, ตรวจจับ Packet Loss และควบคุมการทำ Handover ระหว่างดาวเทียมแบบไร้รอยต่อ
 
 ---
 
-## 3. ตัวอย่าง Log บนจอ
+## 📡 2. ลำดับการทำงานของระบบ (Starlink-Style Workflow)
 
-**Ground Station:**
-```text
-[GROUND] Constellation Control Ready!
-Type 'start' to simulate Sat 1 flying over.
+ระยะเวลาของดาวเทียมถูกย่อลงมาเหลือ 10 วินาที เพื่อให้แสดงผลแบบ Demo ได้อย่างรวดเร็ว
 
-[CMD] Sending START_PASS to Sat 1...
-[GROUND] Sat 1 is now in STORE phase (collecting silently for 10s)...
+1.  **[Ground] สแตนด์บาย:** ผู้ใช้เปิดหน้าจอ Serial Monitor พิมพ์ `start` เพื่อเริ่มภารกิจเครือข่าย
+2.  **[Ground -> Sat 1] Uplink สั่งการ:** Ground ยิงสัญญาณวิทยุ `START_PASS` เพื่อปลุกดาวเทียมดวงแรก (Sat 1) 
+3.  **[Sat 1 -> Ground] สตรีมสด (Live Stream - 10s):** 
+    *   Sat 1 บินเข้าสู่ระยะทำการ
+    *   เริ่มเก็บข้อมูลและ **"ยิงกลับมาที่ Ground ทันที"** (ทุกๆ ครึ่งวินาที)
+    *   หน้าจอ Ground จะเห็นข้อมูลไหลเข้ามาเป็นสายน้ำแบบ Real-Time ตลอด 10 วินาที
+4.  **[Sat 1 -> Ground] การส่งมอบงาน (Seamless Handover):**
+    *   เมื่อครบ 10 วินาที Sat 1 กำลังจะหลุดขอบฟ้า มันจะส่งสัญญาณ `HANDOVER` มาบอก Ground
+5.  **[Ground] ประสานงานไร้รอยต่อ:**
+    *   Ground รับทราบว่า Sat 1 ไปแล้ว มันจะใช้เวลาประมวลผล **เพียง 0.5 วินาที** (จำลองพื้นที่สัญญาณซ้อนทับกัน - Overlapping Coverage)
+    *   Ground ยิงสัญญาณ `RESUME:[ลำดับข้อมูลถัดไป]` ขึ้นไปหาดาวเทียมดวงที่ 2 (Sat 2) ทันที
+6.  **[Sat 2 -> Ground] สตรีมสดต่อเนื่อง (Live Stream - 10s):**
+    *   บอร์ดจำลองสลับบทบาทเป็น Sat 2
+    *   ทำการสตรีมข้อมูลต่อจากตัวเลขลำดับเดิมทันที ทำให้ฝั่ง Ground แทบไม่รู้สึกว่าดาวเทียมเปลี่ยนดวงแล้ว
+7.  **[Sat 2 -> Ground] สิ้นสุดการโคจร:**
+    *   เมื่อผ่านไปอีก 10 วินาที Sat 2 ทำงานเสร็จ ส่งสัญญาณ `FINAL` 
+8.  **[Ground] สรุปผล:** Ground แสดงผลรวมของแพ็คเกจข้อมูลทั้งหมดที่สตรีมสำเร็จ
 
-[DETECT] Incoming DATA DUMP burst detected! Receiving...
-  -> [DUMP] ID: 0   | Time: 5432 ms | Batt: 3.84V | Temp: 22.1C | RSSI: -42 dBm
-  -> [DUMP] ID: 1   | Time: 6210 ms | Batt: 3.91V | Temp: 24.5C | RSSI: -45 dBm
-  -> [DUMP] ID: 2   | Time: 6980 ms | Batt: 4.10V | Temp: 31.0C | RSSI: -43 dBm
-...
-[GROUND] Data Dump Complete! Last ID successfully received: 14
-[GROUND] Instructing Sat 2 to resume from ID: 15 in 3 seconds...
+---
 
-[CMD] Sending RESUME to Sat 2...
-[GROUND] Sat 2 is now in STORE phase (collecting silently for 10s)...
-
-[DETECT] Incoming DATA DUMP burst detected! Receiving...
-  -> [DUMP] ID: 15  | Time: 20100 ms| Batt: 3.75V | Temp: 28.4C | RSSI: -50 dBm
->> [WARNING] PACKET LOSS DETECTED! Expected 16, but got 17 <<
-  -> [DUMP] ID: 17  | Time: 21500 ms| Batt: 4.05V | Temp: 21.9C | RSSI: -48 dBm
-...
-
-====================================
-[GROUND] Constellation Mission Complete!
-Total packets collected via Data Dumps up to ID: 28
-====================================
-```
+## 🛠️ 3. ข้อดีของสถาปัตยกรรมนี้
+*   **Low Latency:** ข้อมูลถึงพื้นโลกทันทีโดยไม่ต้องรอให้จบ Pass (เหมือนเวลาใช้อินเทอร์เน็ตผ่านดาวเทียม)
+*   **Continuous Coverage:** การหน่วงเวลา Handover ที่สั้นมาก (0.5 วินาที) เลียนแบบพฤติกรรมการรักษา Session ให้ผู้ใช้ไม่หลุดจากอินเทอร์เน็ต
+*   **Scalability:** สามารถประยุกต์โค้ดเพื่อรองรับดาวเทียมดวงที่ 3, 4, 5 ต่อไปเรื่อยๆ เป็นเครือข่ายขนาดใหญ่ได้
