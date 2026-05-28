@@ -21,7 +21,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
 
-  Serial.println("[CONSTELLATION SIMULATOR: STORE & FORWARD]");
+  Serial.println("[STARLINK SIMULATOR: CONTINUOUS STREAM & RELAY]");
   Serial.println("Waiting for Ground commands...");
 
   LoRa.setPins(ss, rst, dio0);
@@ -49,45 +49,36 @@ void loop() {
   }
 }
 
-// ฟังก์ชันจำลองดาวเทียมบินผ่าน: เก็บข้อมูลเงียบๆ (Store) แล้วสาดข้อมูลตู้มเดียว (Forward)
+// ฟังก์ชันจำลองดาวเทียมบินผ่าน: สตรีมสด (Live Stream) ไม่มีการกักเก็บ
 void runSatellitePass(String satName) {
-  Serial.println("\n[" + satName + "] Entering coverage zone! Starting STORE phase...");
+  Serial.println("\n[" + satName + "] Entering coverage zone! Starting REAL-TIME STREAMING...");
   unsigned long startTime = millis();
-  
-  // สร้าง Array สำหรับเป็นบัฟเฟอร์เก็บข้อมูล (เก็บได้สูงสุด 50 ชุดต่อรอบ)
-  TelemetryPacket buffer[50]; 
-  int collectedCount = 0;
+  int streamedCount = 0;
 
-  // 1. PHASE: STORE (บินผ่าน 10 วินาที เก็บข้อมูลเงียบๆ ไม่ส่งวิทยุ)
-  while (millis() - startTime < 10000 && collectedCount < 50) {
-    // บันทึกข้อมูลลง Array (SD Card จำลอง)
-    buffer[collectedCount].packet_id = dataIndex;
-    buffer[collectedCount].timestamp = millis();
-    buffer[collectedCount].battery_volts = 3.7 + ((float)random(0, 50) / 100.0);
-    buffer[collectedCount].temperature_c = 20.0 + ((float)random(0, 150) / 10.0);
+  // REAL-TIME STREAMING PHASE (อ่านปุ๊บ ส่งปั๊บ ตลอดเวลา 10 วินาที)
+  while (millis() - startTime < 10000) {
+    TelemetryPacket pkt;
+    pkt.packet_id = dataIndex;
+    pkt.timestamp = millis();
+    pkt.battery_volts = 3.7 + ((float)random(0, 50) / 100.0);
+    pkt.temperature_c = 20.0 + ((float)random(0, 150) / 10.0);
 
-    Serial.printf("[%s] Reading Sensor... Stored in Buffer Index %d (Packet ID: %d)\n", 
-                  satName.c_str(), collectedCount, dataIndex);
+    // ยิงข้อมูลทันที (Live Stream)
+    LoRa.beginPacket();
+    LoRa.write((uint8_t*)&pkt, sizeof(TelemetryPacket));
+    LoRa.endPacket();
+
+    Serial.printf("[%s] Streaming to Ground... Packet ID: %d\n", satName.c_str(), dataIndex);
     
     dataIndex++;
-    collectedCount++;
-    delay(random(300, 800)); // สุ่มเวลาอ่านค่าเซ็นเซอร์
-  }
-
-  // 2. PHASE: FORWARD (Data Dump - ยิงข้อมูลทั้งหมดรวดเดียวลง Ground Station)
-  Serial.printf("\n[%s] Pass complete. Initiating DATA DUMP (%d packets)...\n", satName.c_str(), collectedCount);
-  
-  for (int i = 0; i < collectedCount; i++) {
-    LoRa.beginPacket();
-    LoRa.write((uint8_t*)&buffer[i], sizeof(TelemetryPacket));
-    LoRa.endPacket();
+    streamedCount++;
     
-    // หน่วงเวลาเล็กน้อย (100ms) ให้วิทยุ Ground ฝั่งรับทำงานทัน และป้องกัน LoRa Module ค้าง
-    delay(100); 
+    // หน่วงเวลาจำลองอัตราการส่งข้อมูลแบบต่อเนื่อง (ประมาณ 2 ครั้งต่อวินาที)
+    delay(random(400, 700)); 
   }
 
-  // 3. จบการส่ง Data Dump ส่งสัญญาณบอก Ground ว่าจบแล้ว
-  Serial.println("[" + satName + "] Data Dump Complete. Sending HANDOVER/FINAL signal...");
+  // จบการบินผ่าน ส่งสัญญาณ Seamless Handover ให้ดวงต่อไป
+  Serial.println("[" + satName + "] Leaving coverage zone. Sending SEAMLESS HANDOVER signal...");
   LoRa.beginPacket();
   if (satName == "SAT 1") LoRa.print("HANDOVER");
   else LoRa.print("FINAL");
