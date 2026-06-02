@@ -1,13 +1,13 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
-const char *ssid = "ESP32_MagicTouch";
-const char *password = "12345678";
+class MagicTouchServer {
+private:
+    const char *ssid = "ESP32_MagicTouch";
+    const char *password = "12345678";
+    WebServer server;
 
-WebServer server(80);
-
-// โค้ดหน้าเว็บ HTML แสดงเกจวัดการสัมผัส 3 จุดพร้อมกัน
-const char* html_page = R"rawliteral(
+    const char* html_page = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
@@ -107,46 +107,72 @@ const char* html_page = R"rawliteral(
 </html>
 )rawliteral";
 
-void handleRoot() {
-  server.send(200, "text/html", html_page);
-}
+    static MagicTouchServer* instance;
 
-void handleData() {
-  // อ่านค่าจากเซ็นเซอร์สัมผัส 3 จุดพร้อมกัน
-  int t4 = touchRead(4);   // ขา Pin 4
-  int t13 = touchRead(13); // ขา Pin 13
-  int t14 = touchRead(14); // ขา Pin 14
+    static void handleRootStatic() {
+        if (instance) instance->handleRoot();
+    }
 
-  // สร้าง JSON
-  String json = "{";
-  json += "\"t4\":" + String(t4) + ",";
-  json += "\"t13\":" + String(t13) + ",";
-  json += "\"t14\":" + String(t14);
-  json += "}";
+    static void handleDataStatic() {
+        if (instance) instance->handleData();
+    }
 
-  server.send(200, "application/json", json);
-}
+    void handleRoot() {
+        server.send(200, "text/html", html_page);
+    }
+
+    void handleData() {
+        int t4 = touchRead(4);
+        int t13 = touchRead(13);
+        int t14 = touchRead(14);
+
+        String json = "{";
+        json += "\"t4\":" + String(t4) + ",";
+        json += "\"t13\":" + String(t13) + ",";
+        json += "\"t14\":" + String(t14);
+        json += "}";
+
+        server.send(200, "application/json", json);
+    }
+
+public:
+    MagicTouchServer() : server(80) {
+        instance = this;
+    }
+
+    void begin() {
+        Serial.begin(115200);
+        delay(1000); 
+
+        Serial.println("\n--------------------------");
+        Serial.println("Starting Multi-Touch AP...");
+        
+        WiFi.softAP(ssid, password);
+        IPAddress IP = WiFi.softAPIP();
+        
+        Serial.print("SSID: "); Serial.println(ssid);
+        Serial.print("IP Address: "); Serial.println(IP);
+
+        server.on("/", handleRootStatic);
+        server.on("/data", handleDataStatic);
+
+        server.begin();
+        Serial.println("Dashboard is live! Waiting for connection...");
+    }
+
+    void update() {
+        server.handleClient();
+    }
+};
+
+MagicTouchServer* MagicTouchServer::instance = nullptr;
+
+MagicTouchServer touchServer;
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000); 
-
-  Serial.println("\n--------------------------");
-  Serial.println("Starting Multi-Touch AP...");
-  
-  WiFi.softAP(ssid, password);
-  IPAddress IP = WiFi.softAPIP();
-  
-  Serial.print("SSID: "); Serial.println(ssid);
-  Serial.print("IP Address: "); Serial.println(IP);
-
-  server.on("/", handleRoot);
-  server.on("/data", handleData);
-
-  server.begin();
-  Serial.println("Dashboard is live! Waiting for connection...");
+    touchServer.begin();
 }
 
 void loop() {
-  server.handleClient();
+    touchServer.update();
 }
